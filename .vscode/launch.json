@@ -1,0 +1,45 @@
+{
+  "configurations": [
+    {
+      "type": "node",
+      "name": "vscode-jest-tests",
+      "request": "launch",
+      "console": "integratedTerminal",
+      "internalConsoleOptions": "neverOpen",
+      "cwd": "${workspaceFolder}",
+      "args": [
+        "./node_modules/jest/bin/jest.js",
+        "--projects",
+        "./jest.config.js",
+        "--runInBand",
+        "--watchAll=false"
+      ]
+    },
+    {
+      "type": "pwa-node",
+      "name": "check-license",
+      "request": "launch",
+      "console": "integratedTerminal",
+      "internalConsoleOptions": "neverOpen",
+      "cwd": "${workspaceFolder}",
+      "program": "${workspaceFolder}/build/check-license.js",
+      "runtimeArgs": [
+        "-r",
+        "esm"
+      ]
+    },
+    {
+      "type": "pwa-node",
+      "name": "publish",
+      "request": "launch",
+      "console": "integratedTerminal",
+      "internalConsoleOptions": "neverOpen",
+      "cwd": "${workspaceFolder}",
+      "program": "${workspaceFolder}/build/publish.js",
+      "runtimeArgs": [
+        "-r",
+        "esm"
+      ]
+    }
+  ]
+}
