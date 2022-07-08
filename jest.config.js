@@ -9,8 +9,6 @@ module.exports = {
     '^\\$$': path.join(__dirname, 'src'),
     '^\\$/(.*)$': path.join(__dirname, 'src/$1'),
     '^\\$test/(.*)$': path.join(__dirname, 'test/$1'),
-    '^\\$ex/(.*)$': path.join(__dirname, 'test/example/src/$1'),
-    '^\\$defs/(.*)$': path.join(__dirname, 'test/example/src/defs/$1'),
   },
   testMatch: ['**/test/**/*.spec.*'],
   collectCoverage: true,

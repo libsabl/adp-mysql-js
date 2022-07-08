@@ -16,6 +16,8 @@
     "onStartup": ["all-tests"]
   },
   "cSpell.words": [
-    "Initter"
+    "Initter",
+    "linearizable",
+    "Transactable"
   ]
 }
