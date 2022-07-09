@@ -21,18 +21,18 @@ async function* seq(
 
 describe('iter', () => {
   it('iterates to the end', async () => {
-    const flag = { msg: '', cnt: 0 };
+    const flag = { msg: '', cnt: 0, sum: 0 };
     for await (const n of seq(10, flag)) {
-      console.log(n);
+      flag.sum += n;
     }
     expect(flag.cnt).toBe(10);
     expect(flag.msg).toBe('done');
   });
 
   it('cleans up if aborted', async () => {
-    const flag = { msg: '', cnt: 0 };
+    const flag = { msg: '', cnt: 0, sum: 0 };
     for await (const n of seq(10, flag)) {
-      console.log(n);
+      flag.sum += n;
       if (n > 5) {
         break;
       }
@@ -42,11 +42,10 @@ describe('iter', () => {
   });
 
   it('cleans up if exception', async () => {
-    const flag = { msg: '', cnt: 0 };
-
+    const flag = { msg: '', cnt: 0, sum: 0 };
     try {
       for await (const n of seq(10, flag)) {
-        console.log(n);
+        flag.sum += n;
         if (n > 5) {
           throw new Error('boom');
         }

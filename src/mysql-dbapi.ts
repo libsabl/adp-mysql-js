@@ -6,43 +6,15 @@ import { Canceler, IContext } from '@sabl/context';
 import { DbConn, DbPool, DbTxn, Result, Row, Rows } from './db-api';
 import { StorageKind, StorageMode, TxnOptions } from './storage-api';
 
-import { Connection, MysqlError, Pool, Query } from 'mysql';
+import { Connection, QueryError, Pool, Query, Field } from 'mysql2';
+import { cancelQuery, closeConnection } from './mysql-util';
 
 type FnReject = (reason: unknown) => void;
 type FnResolve<T> = (value: T | PromiseLike<T>) => void;
 const highWater = 100;
+const resume = 75;
 
-function closeConnection(con: Connection, kill = false): Promise<void> {
-  if (kill) {
-    con.destroy();
-    return Promise.resolve();
-  }
-
-  return new Promise((resolve, reject) => {
-    con.end((err) => {
-      if (err != null) {
-        reject(err);
-      } else {
-        resolve();
-      }
-    });
-  });
-}
-
-function cancelQuery(con: Connection, pool: Pool): Promise<void> {
-  const threadId = con.threadId;
-  return new Promise((resolve, reject) => {
-    pool.query(`KILL QUERY ${threadId}`, (err) => {
-      if (err != null) {
-        reject(err);
-      } else {
-        resolve();
-      }
-    });
-  });
-}
-
-class MySQLRows implements Rows {
+export class MySQLRows implements Rows {
   readonly #qry: Query;
   readonly #con: Connection;
   readonly #pool: Pool;
@@ -51,9 +23,10 @@ class MySQLRows implements Rows {
   readonly #buf: Row[] = [];
 
   #row: Row | null = null;
-  #err: MysqlError | null = null;
+  #err: QueryError | null = null;
   #fields: string[] | null = null;
-  #all = false;
+  #done = false;
+  #paused = false;
 
   #nextReject: FnReject | null = null;
   #nextResolve: FnResolve<boolean> | null = null;
@@ -76,11 +49,11 @@ class MySQLRows implements Rows {
     }
 
     qry.on('error', this.#error.bind(this));
-    qry.on('fields', (fields) => {
-      this.#fields = fields.map((f) => f.name);
+    qry.on('fields', (fields: unknown) => {
+      this.#fields = (<Field[]>fields).map((f) => f.name);
     });
     qry.on('result', this.#pushRow.bind(this));
-    qry.on('end', this.#done.bind(this));
+    qry.on('end', this.#end.bind(this));
   }
 
   get row(): Row {
@@ -95,7 +68,7 @@ class MySQLRows implements Rows {
     return this.#err;
   }
 
-  #error(err: MysqlError) {
+  #error(err: QueryError) {
     this.#err = err;
 
     const rej = this.#nextReject;
@@ -122,11 +95,12 @@ class MySQLRows implements Rows {
     buf.push(<Row>row);
     if (buf.length >= highWater) {
       this.#con.pause();
+      this.#paused = true;
     }
   }
 
-  #done() {
-    this.#all = true;
+  #end() {
+    this.#done = true;
     if (this.#nextResolve) {
       return this.#resolveNext(false);
     }
@@ -148,8 +122,10 @@ class MySQLRows implements Rows {
   }
 
   close(): Promise<void> {
-    this.#cancel();
-    return Promise.resolve();
+    if (this.#done) {
+      return Promise.resolve();
+    }
+    return this.#cancel();
   }
 
   columns(): string[] {
@@ -163,9 +139,12 @@ class MySQLRows implements Rows {
     if (this.#err) return Promise.reject(this.#err);
     if (this.#buf.length) {
       this.#row = <Row>this.#buf.shift();
+      if (this.#paused && this.#buf.length <= resume) {
+        this.#con.resume();
+      }
       return Promise.resolve(true);
     }
-    if (this.#all) {
+    if (this.#done) {
       return Promise.resolve(false);
     }
     return new Promise((resolve, reject) => {

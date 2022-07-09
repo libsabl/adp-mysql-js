@@ -3,6 +3,7 @@
   "include": [
     "./src",
     "./test",
+    "./bin",
     "./build",
     ".eslintrc.js",
     "jest.config.js",

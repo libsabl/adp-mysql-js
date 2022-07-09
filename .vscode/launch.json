@@ -16,7 +16,7 @@
       ]
     },
     {
-      "type": "pwa-node",
+      "type": "node",
       "name": "check-license",
       "request": "launch",
       "console": "integratedTerminal",
@@ -29,7 +29,7 @@
       ]
     },
     {
-      "type": "pwa-node",
+      "type": "node",
       "name": "publish",
       "request": "launch",
       "console": "integratedTerminal",
@@ -40,6 +40,14 @@
         "-r",
         "esm"
       ]
+    },
+    {
+      "type": "node",
+      "request": "launch",
+      "name": "Debug bin",
+      "program": "${workspaceFolder}/bin/query-test.ts",
+      "preLaunchTask": "tsc: build - tsconfig.debug.json",
+      "outFiles": ["${workspaceFolder}/out/**/*.js"]
     }
   ]
 }
