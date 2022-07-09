@@ -21,16 +21,15 @@ export function closeConnection(con: Connection, kill = false): Promise<void> {
   });
 }
 
-export function cancelQuery(con: Connection, pool: Pool): Promise<void> {
+export async function cancelQuery(con: Connection, pool: Pool): Promise<void> {
   const threadId = con.threadId;
-  return new Promise((resolve, reject) => {
-    pool.query(`KILL QUERY ${threadId}`, (err) => {
-      if (err != null) {
-        reject(err);
-      } else {
-        resolve();
-      }
-    });
+  console.log(`KILL QUERY ${threadId}`);
+  await usePoolConnection(pool, async (con) => {
+    try {
+      await con.promise().execute(`KILL QUERY ${threadId}`);
+    } catch (err) {
+      console.error(err);
+    }
   });
 }
 

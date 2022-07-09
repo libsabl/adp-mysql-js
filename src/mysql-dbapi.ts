@@ -2,6 +2,8 @@
 // Use of this source code is governed by a MIT
 // license that can be found in the LICENSE file.
 
+/* eslint-disable @typescript-eslint/no-non-null-assertion */
+
 import { Canceler, IContext } from '@sabl/context';
 import { DbConn, DbPool, DbTxn, Result, Row, Rows } from './db-api';
 import { StorageKind, StorageMode, TxnOptions } from './storage-api';
@@ -13,6 +15,38 @@ type FnReject = (reason: unknown) => void;
 type FnResolve<T> = (value: T | PromiseLike<T>) => void;
 const highWater = 100;
 const resume = 75;
+
+class PromiseHandle<T> {
+  constructor() {
+    let res: FnResolve<T>;
+    let rej: FnReject;
+
+    this.#promise = new Promise<T>((resolve, reject) => {
+      res = resolve;
+      rej = reject;
+    });
+
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+    this.#resolve = res!;
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+    this.#reject = rej!;
+  }
+
+  readonly #resolve: FnResolve<T>;
+  resolve(value: T | PromiseLike<T>): void {
+    return this.#resolve(value);
+  }
+
+  readonly #reject: FnReject;
+  reject(reason?: unknown): void {
+    return this.#reject(reason);
+  }
+
+  readonly #promise: Promise<T>;
+  get promise(): Promise<T> {
+    return this.#promise;
+  }
+}
 
 export class MySQLRows implements Rows {
   readonly #qry: Query;
@@ -28,8 +62,9 @@ export class MySQLRows implements Rows {
   #done = false;
   #paused = false;
 
-  #nextReject: FnReject | null = null;
-  #nextResolve: FnResolve<boolean> | null = null;
+  #next: PromiseHandle<boolean> | null = null;
+  #close: PromiseHandle<void> | null = null;
+  #canceling = false;
 
   constructor(
     qry: Query,
@@ -71,16 +106,34 @@ export class MySQLRows implements Rows {
   #error(err: QueryError) {
     this.#err = err;
 
-    const rej = this.#nextReject;
-    if (rej != null) {
-      this.#nextResolve = null;
-      this.#nextReject = null;
-      rej(this.#err);
+    if (err.code === 'ER_QUERY_INTERRUPTED') {
+      if (this.#canceling) {
+        console.log('Ignoring expected ER_QUERY_INTERRUPTED error');
+        // Intentional KILL QUERY
+        return this.#end();
+      }
+    }
+
+    const pNext = this.#next;
+    if (pNext != null) {
+      this.#next = null;
+      pNext.reject(this.#err);
+    }
+
+    const pClose = this.#close;
+    if (pClose != null) {
+      this.#close = null;
+      pClose.reject(err);
     }
   }
 
   #pushRow(row: unknown) {
-    if (this.#nextResolve) {
+    if (this.#canceling) {
+      // console.log('Ignoring row: cancelling');
+      return;
+    }
+
+    if (this.#next) {
       if (this.#buf.length) {
         throw new Error('Invalid state: waiting on non-empty buffer');
       }
@@ -94,26 +147,37 @@ export class MySQLRows implements Rows {
     const buf = this.#buf;
     buf.push(<Row>row);
     if (buf.length >= highWater) {
-      this.#con.pause();
-      this.#paused = true;
+      if (this.#paused) {
+        console.log(`BUF(${buf.length}): already paused`);
+      } else {
+        console.log(`BUF(${buf.length}): pausing`);
+        this.#con.pause();
+        this.#paused = true;
+      }
     }
   }
 
   #end() {
     this.#done = true;
-    if (this.#nextResolve) {
+    if (this.#next) {
       return this.#resolveNext(false);
+    }
+    const pClose = this.#close;
+    if (pClose != null) {
+      this.#close = null;
+      pClose.resolve();
     }
   }
 
   #resolveNext(ok: boolean): void {
-    const r = <FnResolve<boolean>>this.#nextResolve;
-    this.#nextResolve = null;
-    this.#nextReject = null;
-    r(ok);
+    const pNext = this.#next!;
+    this.#next = null;
+    pNext.resolve(ok);
   }
 
   #cancel(): Promise<void> {
+    this.#canceling = true;
+
     if (!this.#keepOpen) {
       // Just close the connection
       return closeConnection(this.#con);
@@ -121,11 +185,20 @@ export class MySQLRows implements Rows {
     return cancelQuery(this.#con, this.#pool);
   }
 
-  close(): Promise<void> {
+  async close(): Promise<void> {
     if (this.#done) {
       return Promise.resolve();
     }
-    return this.#cancel();
+    const pClose = (this.#close = new PromiseHandle<void>());
+    await this.#cancel();
+    if (this.#paused) {
+      this.#con.resume();
+    }
+    if (this.#done) {
+      this.#close = null;
+      return Promise.resolve();
+    }
+    await pClose.promise;
   }
 
   columns(): string[] {
@@ -140,17 +213,16 @@ export class MySQLRows implements Rows {
     if (this.#buf.length) {
       this.#row = <Row>this.#buf.shift();
       if (this.#paused && this.#buf.length <= resume) {
+        console.log('resuming');
         this.#con.resume();
+        this.#paused = false;
       }
       return Promise.resolve(true);
     }
     if (this.#done) {
       return Promise.resolve(false);
     }
-    return new Promise((resolve, reject) => {
-      this.#nextResolve = resolve;
-      this.#nextReject = reject;
-    });
+    return (this.#next = new PromiseHandle<boolean>()).promise;
   }
 
   values(): unknown[] {

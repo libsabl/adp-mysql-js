@@ -1,10 +1,12 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { createPool, Field, RowDataPacket } from 'mysql2';
 import { config } from 'dotenv';
-import { usePoolConnection } from '$/mysql-util';
-import { MySQLRows } from '$/mysql-dbapi';
-import { Rows } from '$/db-api';
 import { faker } from '@faker-js/faker';
+
+import { usePoolConnection } from '../src/mysql-util';
+import { MySQLRows } from '../src/mysql-dbapi';
+import { Rows } from '../src/db-api';
+import { Canceler } from '@sabl/context';
 
 config({ path: './env/test.env' });
 
@@ -32,9 +34,47 @@ export async function queryRows() {
         console.log(rows.row);
       }
     } finally {
-      rows?.close();
+      await rows?.close();
     }
   });
+  await pool.promise().end();
+}
+
+export async function queryRowsCancel() {
+  const pool = getPool();
+  await usePoolConnection(pool, async (con) => {
+    let rows: Rows | null = null;
+    let i = 0;
+    const [clr, cancel] = Canceler.create();
+    try {
+      const qry = con.query('select * from big_table');
+      rows = new MySQLRows(qry, con, pool, true, clr);
+
+      while (await rows.next()) {
+        const row = rows.row;
+        console.log(row.id, row.label);
+        if (++i == 300) {
+          cancel();
+        }
+      }
+    } finally {
+      await rows?.close();
+    }
+
+    // Reuse open connection
+    try {
+      const qry = con.query('select * from some_data');
+      rows = new MySQLRows(qry, con, pool, true);
+
+      while (await rows.next()) {
+        const row = rows.row;
+        console.log(row.id, row.label);
+      }
+    } finally {
+      await rows?.close();
+    }
+  });
+
   await pool.promise().end();
 }
 
@@ -89,17 +129,20 @@ export async function queryEvents() {
 export async function insertMany() {
   const pool = getPool();
   await usePoolConnection(pool, async (con) => {
-    const sql = `
-      insert big_table ( code , label, num, ts)
-      values ( ?, ?, ?, ? )
-    `;
+    const sql = 'insert big_table ( code , label, num, ts) values ?';
     const cp = con.promise();
+    let rows = [];
     for (let i = 0; i < 100_000; i++) {
       const code = faker.datatype.uuid();
       const label = faker.random.words(5);
       const num = faker.datatype.number(10000);
       const ts = faker.date.soon(30);
-      await cp.execute(sql, [code, label, num, ts]);
+      rows.push([code, label, num, ts]);
+      if (0 == (i + 1) % 1000) {
+        const [result] = await cp.query(sql, [rows]);
+        console.log(i + 1, result);
+        rows = [];
+      }
     }
   });
 
@@ -107,5 +150,5 @@ export async function insertMany() {
 }
 
 (async () => {
-  await insertMany();
+  await queryRowsCancel();
 })();
