@@ -78,6 +78,57 @@ export async function queryRowsCancel() {
   await pool.promise().end();
 }
 
+export async function queryRowsClose() {
+  const pool = getPool();
+  await usePoolConnection(pool, async (con) => {
+    let rows: Rows | null = null;
+    let i = 0;
+    try {
+      const qry = con.query('select * from big_table');
+      rows = new MySQLRows(qry, con, pool, false);
+
+      const cols = await rows.columns();
+      console.log(cols);
+      console.log(await rows.columnTypes());
+
+      while (await rows.next()) {
+        const row = rows.row;
+        console.log(row.id, row.label);
+        if (++i == 300) {
+          await rows.close();
+        }
+      }
+    } finally {
+      await rows?.close();
+    }
+  });
+
+  await pool.promise().end();
+}
+
+export async function queryRowTypes() {
+  const pool = getPool();
+  await usePoolConnection(pool, async (con) => {
+    let rows: Rows | null = null;
+    try {
+      const qry = con.query('select * from many_types');
+      rows = new MySQLRows(qry, con, pool, false);
+
+      const colTypes = await rows.columnTypes();
+      console.log(colTypes);
+
+      while (await rows.next()) {
+        const row = rows.row;
+        console.log(row.toObject());
+      }
+    } finally {
+      await rows?.close();
+    }
+  });
+
+  await pool.promise().end();
+}
+
 export async function queryEvents() {
   const pool = getPool();
   await usePoolConnection(pool, async (con) => {
@@ -150,5 +201,5 @@ export async function insertMany() {
 }
 
 (async () => {
-  await queryRowsCancel();
+  await queryRowTypes();
 })();

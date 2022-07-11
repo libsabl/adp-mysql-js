@@ -4,9 +4,18 @@
 
 import { Connection, Pool, PoolConnection } from 'mysql2';
 
-export function closeConnection(con: Connection, kill = false): Promise<void> {
+export function closeConnection(
+  con: Connection,
+  pool?: Pool,
+  kill = false
+): Promise<void> {
   if (kill) {
     con.destroy();
+    return Promise.resolve();
+  }
+
+  if (pool) {
+    (<PoolConnection>con).release();
     return Promise.resolve();
   }
 

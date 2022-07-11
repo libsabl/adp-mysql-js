@@ -5,65 +5,75 @@
 /* eslint-disable @typescript-eslint/no-non-null-assertion */
 
 import { Canceler, IContext } from '@sabl/context';
-import { DbConn, DbPool, DbTxn, Result, Row, Rows } from './db-api';
+import {
+  ColumnInfo,
+  DbConn,
+  DbPool,
+  DbTxn,
+  PlainObject,
+  Result,
+  Row,
+  Rows,
+} from './db-api';
 import { StorageKind, StorageMode, TxnOptions } from './storage-api';
 
-import { Connection, QueryError, Pool, Query, Field } from 'mysql2';
-import { cancelQuery, closeConnection } from './mysql-util';
+import { Connection, QueryError, Pool, Query } from 'mysql2';
+import { cancelQuery, closeConnection, usePoolConnection } from './mysql-util';
+import { ObjectRow } from './object-row';
+import { ColumnDefinition, FieldFlags, parseType } from './mysql-types';
+import { hasFlag, PromiseHandle } from './util';
 
-type FnReject = (reason: unknown) => void;
-type FnResolve<T> = (value: T | PromiseLike<T>) => void;
 const highWater = 100;
 const resume = 75;
 
-class PromiseHandle<T> {
-  constructor() {
-    let res: FnResolve<T>;
-    let rej: FnReject;
+function toColInfo(col: ColumnDefinition): ColumnInfo {
+  const [typeName, length] = parseType(
+    col.columnType,
+    col.flags,
+    col.columnLength
+  );
 
-    this.#promise = new Promise<T>((resolve, reject) => {
-      res = resolve;
-      rej = reject;
-    });
-
-    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-    this.#resolve = res!;
-    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-    this.#reject = rej!;
+  let decimalSize: { precision: number; scale: number } | undefined = undefined;
+  if (typeName === 'DECIMAL') {
+    decimalSize = {
+      precision: col.columnLength - 2,
+      scale: col.decimals,
+    };
   }
 
-  readonly #resolve: FnResolve<T>;
-  resolve(value: T | PromiseLike<T>): void {
-    return this.#resolve(value);
-  }
-
-  readonly #reject: FnReject;
-  reject(reason?: unknown): void {
-    return this.#reject(reason);
-  }
-
-  readonly #promise: Promise<T>;
-  get promise(): Promise<T> {
-    return this.#promise;
-  }
+  return {
+    name: col.name,
+    typeName,
+    nullable: !hasFlag(col.flags, FieldFlags.NOT_NULL),
+    length: length || undefined,
+    decimalSize,
+  };
 }
 
+function openRows(
+  ctx: IContext,
+  con: Connection,
+  sql: string,
+  ...params: unknown[]
+): Promise<Rows> {}
+
 export class MySQLRows implements Rows {
-  readonly #qry: Query;
   readonly #con: Connection;
   readonly #pool: Pool;
   readonly #keepOpen: boolean;
-  readonly #clr: Canceler | null;
-  readonly #buf: Row[] = [];
+  readonly #buf: PlainObject[] = [];
 
   #row: Row | null = null;
   #err: QueryError | null = null;
-  #fields: string[] | null = null;
+  #columns: ColumnInfo[] | null = null;
+  #fieldNames: string[] | null = null;
   #done = false;
   #paused = false;
 
-  #next: PromiseHandle<boolean> | null = null;
-  #close: PromiseHandle<void> | null = null;
+  #waitNext: PromiseHandle<boolean> | null = null;
+  #waitClose: PromiseHandle<void> | null = null;
+  #waitCols: PromiseHandle<string[]> | null = null;
+  #waitColTypes: PromiseHandle<ColumnInfo[]> | null = null;
   #canceling = false;
 
   constructor(
@@ -73,20 +83,16 @@ export class MySQLRows implements Rows {
     keepOpen: boolean,
     clr?: Canceler
   ) {
-    this.#qry = qry;
     this.#con = con;
     this.#pool = pool;
     this.#keepOpen = keepOpen;
-    this.#clr = clr || null;
 
     if (clr != null) {
       clr.onCancel(this.#cancel.bind(this));
     }
 
     qry.on('error', this.#error.bind(this));
-    qry.on('fields', (fields: unknown) => {
-      this.#fields = (<Field[]>fields).map((f) => f.name);
-    });
+    qry.on('fields', this.#onFields.bind(this));
     qry.on('result', this.#pushRow.bind(this));
     qry.on('end', this.#end.bind(this));
   }
@@ -114,38 +120,54 @@ export class MySQLRows implements Rows {
       }
     }
 
-    const pNext = this.#next;
+    const pNext = this.#waitNext;
     if (pNext != null) {
-      this.#next = null;
+      this.#waitNext = null;
       pNext.reject(this.#err);
     }
 
-    const pClose = this.#close;
+    const pClose = this.#waitClose;
     if (pClose != null) {
-      this.#close = null;
+      this.#waitClose = null;
       pClose.reject(err);
     }
   }
 
-  #pushRow(row: unknown) {
+  #onFields(fields: ColumnDefinition[]) {
+    this.#columns = fields.map(toColInfo);
+    this.#fieldNames = fields.map((f) => f.name);
+    const wc = this.#waitCols;
+    if (wc != null) {
+      this.#waitCols = null;
+      wc.resolve(this.#fieldNames);
+    }
+
+    const wct = this.#waitColTypes;
+    if (wct != null) {
+      this.#waitColTypes = null;
+      wct.resolve(this.#columns.concat());
+    }
+  }
+
+  #pushRow(row: PlainObject) {
     if (this.#canceling) {
       // console.log('Ignoring row: cancelling');
       return;
     }
 
-    if (this.#next) {
+    if (this.#waitNext) {
       if (this.#buf.length) {
         throw new Error('Invalid state: waiting on non-empty buffer');
       }
       // Already waiting for a row. Load
       // it and resolve next() promise
-      this.#row = <Row>row;
+      this.#row = ObjectRow.create(row, this.#fieldNames!);
       return this.#resolveNext(true);
     }
 
     // Not currently waiting
     const buf = this.#buf;
-    buf.push(<Row>row);
+    buf.push(row);
     if (buf.length >= highWater) {
       if (this.#paused) {
         console.log(`BUF(${buf.length}): already paused`);
@@ -159,19 +181,19 @@ export class MySQLRows implements Rows {
 
   #end() {
     this.#done = true;
-    if (this.#next) {
+    if (this.#waitNext) {
       return this.#resolveNext(false);
     }
-    const pClose = this.#close;
+    const pClose = this.#waitClose;
     if (pClose != null) {
-      this.#close = null;
+      this.#waitClose = null;
       pClose.resolve();
     }
   }
 
   #resolveNext(ok: boolean): void {
-    const pNext = this.#next!;
-    this.#next = null;
+    const pNext = this.#waitNext!;
+    this.#waitNext = null;
     pNext.resolve(ok);
   }
 
@@ -180,7 +202,7 @@ export class MySQLRows implements Rows {
 
     if (!this.#keepOpen) {
       // Just close the connection
-      return closeConnection(this.#con);
+      return closeConnection(this.#con, this.#pool);
     }
     return cancelQuery(this.#con, this.#pool);
   }
@@ -189,29 +211,39 @@ export class MySQLRows implements Rows {
     if (this.#done) {
       return Promise.resolve();
     }
-    const pClose = (this.#close = new PromiseHandle<void>());
+    const pClose = (this.#waitClose = new PromiseHandle<void>());
     await this.#cancel();
     if (this.#paused) {
       this.#con.resume();
     }
     if (this.#done) {
-      this.#close = null;
+      this.#waitClose = null;
       return Promise.resolve();
     }
     await pClose.promise;
   }
 
-  columns(): string[] {
-    if (this.#fields == null) {
-      throw new Error('Columns not received yet');
+  columns(): Promise<string[]> {
+    if (this.#fieldNames == null) {
+      const pCols = (this.#waitCols = new PromiseHandle<string[]>()).promise;
+      return pCols;
     }
-    return this.#fields;
+    return Promise.resolve(this.#fieldNames.concat());
+  }
+
+  columnTypes(): Promise<ColumnInfo[]> {
+    if (this.#columns == null) {
+      const pColInfo = (this.#waitColTypes = new PromiseHandle<ColumnInfo[]>())
+        .promise;
+      return pColInfo;
+    }
+    return Promise.resolve(this.#columns.concat());
   }
 
   next(): Promise<boolean> {
     if (this.#err) return Promise.reject(this.#err);
     if (this.#buf.length) {
-      this.#row = <Row>this.#buf.shift();
+      this.#row = ObjectRow.create(this.#buf.shift()!, this.#fieldNames!);
       if (this.#paused && this.#buf.length <= resume) {
         console.log('resuming');
         this.#con.resume();
@@ -222,25 +254,24 @@ export class MySQLRows implements Rows {
     if (this.#done) {
       return Promise.resolve(false);
     }
-    return (this.#next = new PromiseHandle<boolean>()).promise;
-  }
-
-  values(): unknown[] {
-    throw new Error('Method not implemented.');
+    return (this.#waitNext = new PromiseHandle<boolean>()).promise;
   }
 }
 
+/*
 export class MySQLTxn implements DbTxn {
   readonly #con: Connection;
+  readonly #pool: Pool;
+  readonly #keepOpen: boolean;
 
-  constructor(con: Connection) {
+  constructor(con: Connection, pool: Pool, keepOpen: boolean) {
     this.#con = con;
   }
 
   get mode(): StorageMode {
     return StorageMode.txn;
   }
-  get kind(): number {
+  get kind(): string {
     return StorageKind.db;
   }
 
@@ -260,20 +291,35 @@ export class MySQLTxn implements DbTxn {
     throw new Error('Method not implemented.');
   }
 }
+*/
 
 export class MySQLPool implements DbPool {
+  readonly #pool: Pool;
+
+  constructor(pool: Pool) {
+    this.#pool = pool;
+  }
+
   get mode(): StorageMode {
     return StorageMode.pool;
   }
-  get kind(): number {
+  get kind(): string {
     return StorageKind.db;
   }
 
   conn(ctx: IContext): Promise<DbConn> {
     throw new Error('Method not implemented.');
   }
-  queryRow(ctx: IContext, sql: string, ...params: unknown[]): Promise<Row> {
-    throw new Error('Method not implemented.');
+
+  queryRow(
+    ctx: IContext,
+    sql: string,
+    ...params: unknown[]
+  ): Promise<Row | null> {
+    let row: Row;
+    usePoolConnection(pool, (con) => {
+      const qry = con.query();
+    });
   }
   query(ctx: IContext, sql: string, ...params: unknown[]): Promise<Rows> {
     throw new Error('Method not implemented.');

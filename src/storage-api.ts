@@ -32,8 +32,8 @@ export enum StorageMode {
 }
 
 export enum StorageKind {
-  unknown = 0,
-  db = 1,
+  unknown = 'unknown',
+  db = 'database',
 }
 
 /**
@@ -43,7 +43,7 @@ export enum StorageKind {
  */
 export interface StorageApi {
   readonly mode: StorageMode;
-  readonly kind: StorageKind | number;
+  readonly kind: StorageKind | string;
 }
 
 /**

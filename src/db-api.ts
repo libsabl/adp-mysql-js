@@ -15,6 +15,8 @@ export type ParamMap = { [key: string]: unknown };
 
 export type ParamValue = unknown;
 
+export type PlainObject = { [key: string]: unknown };
+
 /** A name-value pair uses as a database query parameter */
 export class NamedParam {
   constructor(readonly name: string, readonly value: unknown) {}
@@ -43,7 +45,10 @@ export interface Row {
   [index: number]: unknown;
 
   /** Return the underlying data as a plain object */
-  toObject(): Map<string, unknown>;
+  toObject(): PlainObject;
+
+  /** Return the underlying data as an array of values */
+  toArray(): unknown[];
 }
 
 /** The result of executing a SQL command */
@@ -59,6 +64,31 @@ export interface Result {
   lastId: number | undefined;
 }
 
+/** Information about a column in a result set */
+export interface ColumnInfo {
+  /** The name of the column */
+  readonly name: string;
+
+  /** The database-specific type name of the column */
+  readonly typeName: string;
+
+  /** Whether the column is nullable */
+  readonly nullable: boolean;
+
+  /**
+   * The precision and scale of the column. Undefined
+   * if the column is not a decimal type
+   */
+  readonly decimalSize?: { precision: number; scale: number };
+
+  /**
+   * The defined length of the column. Undefined
+   * if the column is an int or other non-variable length
+   * type.
+   */
+  readonly length?: number;
+}
+
 /**
  * Rows is the result of a query. Its cursor starts before
  * the first row of the result set. Use `next()` to advance
@@ -67,7 +97,8 @@ export interface Result {
  * Also implements {@link Row} to read the values of the
  * current row by ordinal or name
  *
- * see golang: [`sql.Rows`](https://github.com/golang/go/blob/master/src/database/sql/sql.go)
+ * see golang: [`sql.Rows`](https://pkg.go.dev/database/sql#Rows)
+ * ([source](https://github.com/golang/go/blob/master/src/database/sql/sql.go))
  */
 export interface Rows {
   /**
@@ -79,7 +110,10 @@ export interface Rows {
   close(): Promise<void>;
 
   /** Return the column names of the row set */
-  columns(): string[];
+  columns(): Promise<string[]>;
+
+  /** Return the details about the columns in the row set */
+  columnTypes(): Promise<ColumnInfo[]>;
 
   /**
    * Advance to the next row. Returns true if another
@@ -87,9 +121,10 @@ export interface Rows {
    */
   next(): Promise<boolean>;
 
-  /** Return the raw values of the row */
-  values(): unknown[];
-
+  /**
+   * The latest error, if any, encountered while
+   * opening or advancing the row set
+   */
   get err(): Error | null;
 
   /** Access the current row */
@@ -107,7 +142,11 @@ export interface DbApi extends StorageApi {
    * to signal cancellation by providing a cancelable context.
    * @param sql The literal SQL statement
    * @param params The values of any SQL parameters  */
-  queryRow(ctx: IContext, sql: string, ...params: ParamValue[]): Promise<Row>;
+  queryRow(
+    ctx: IContext,
+    sql: string,
+    ...params: ParamValue[]
+  ): Promise<Row | null>;
 
   /** Execute an arbitrary SELECT query on the context connection and iterate through the returned rows
    * @param ctx The context in which to execute the statement. May be used
