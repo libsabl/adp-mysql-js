@@ -100,7 +100,7 @@ export interface ColumnInfo {
  * see golang: [`sql.Rows`](https://pkg.go.dev/database/sql#Rows)
  * ([source](https://github.com/golang/go/blob/master/src/database/sql/sql.go))
  */
-export interface Rows {
+export interface Rows extends AsyncIterable<Row> {
   /**
    * Closes the Rows, preventing further enumeration.
    * If next is called and returns false and there are
@@ -110,10 +110,10 @@ export interface Rows {
   close(): Promise<void>;
 
   /** Return the column names of the row set */
-  columns(): Promise<string[]>;
+  columns(): string[];
 
   /** Return the details about the columns in the row set */
-  columnTypes(): Promise<ColumnInfo[]>;
+  columnTypes(): ColumnInfo[];
 
   /**
    * Advance to the next row. Returns true if another
@@ -198,4 +198,10 @@ export interface DbPool extends DbApi, DbTransactable {
    * Queries run on the same Conn will be run in the same storage session.
    */
   conn(ctx: IContext): Promise<DbConn>;
+
+  /**
+   * Close and release all connections in the pool.
+   * Generally only used at program termination
+   */
+  close(): Promise<void>;
 }

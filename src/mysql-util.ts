@@ -2,6 +2,7 @@
 // Use of this source code is governed by a MIT
 // license that can be found in the LICENSE file.
 
+import { Canceler, IContext } from '@sabl/context';
 import { Connection, Pool, PoolConnection } from 'mysql2';
 
 export function closeConnection(
@@ -30,10 +31,14 @@ export function closeConnection(
   });
 }
 
-export async function cancelQuery(con: Connection, pool: Pool): Promise<void> {
+export async function cancelQuery(
+  ctx: IContext,
+  con: Connection,
+  pool: Pool
+): Promise<void> {
   const threadId = con.threadId;
   console.log(`KILL QUERY ${threadId}`);
-  await usePoolConnection(pool, async (con) => {
+  await usePoolConnection(ctx, pool, async (con) => {
     try {
       await con.promise().execute(`KILL QUERY ${threadId}`);
     } catch (err) {
@@ -42,7 +47,15 @@ export async function cancelQuery(con: Connection, pool: Pool): Promise<void> {
   });
 }
 
-export function getPoolConnection(pool: Pool): Promise<PoolConnection> {
+export function getPoolConnection(
+  ctx: IContext,
+  pool: Pool
+): Promise<PoolConnection> {
+  const clr = ctx.canceler;
+  if (clr != null) {
+    return getPoolConnection_Cancelable(pool, clr);
+  }
+
   return new Promise((resolve, reject) => {
     pool.getConnection((err, con) => {
       if (err != null) {
@@ -53,11 +66,54 @@ export function getPoolConnection(pool: Pool): Promise<PoolConnection> {
   });
 }
 
+async function getPoolConnection_Cancelable(
+  pool: Pool,
+  clr: Canceler
+): Promise<PoolConnection> {
+  return new Promise((resolve, reject) => {
+    let timedOut = false;
+    let resolved = false;
+
+    const handle: {
+      onCancel: () => void;
+    } = { onCancel: null! };
+
+    handle.onCancel = () => {
+      clr.off(handle.onCancel);
+      if (resolved) {
+        // Already resolved
+        return;
+      }
+      timedOut = true;
+      reject(
+        new Error('Context was canceled before a connection was available')
+      );
+    };
+
+    clr.onCancel(handle.onCancel);
+
+    pool.getConnection((err, con) => {
+      if (timedOut) {
+        // Already rejected
+        return;
+      }
+
+      resolved = true;
+      clr.off(handle.onCancel);
+      if (err != null) {
+        return reject(err);
+      }
+      return resolve(con);
+    });
+  });
+}
+
 export async function usePoolConnection(
+  ctx: IContext,
   pool: Pool,
   cb: (con: PoolConnection) => Promise<void>
 ): Promise<void> {
-  const con = await getPoolConnection(pool);
+  const con = await getPoolConnection(ctx, pool);
   try {
     await cb(con);
   } finally {

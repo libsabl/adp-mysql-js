@@ -1,12 +1,13 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
 import { createPool, Field, RowDataPacket } from 'mysql2';
 import { config } from 'dotenv';
 import { faker } from '@faker-js/faker';
 
 import { usePoolConnection } from '../src/mysql-util';
-import { MySQLRows } from '../src/mysql-dbapi';
-import { Rows } from '../src/db-api';
-import { Canceler } from '@sabl/context';
+import { MySQLPool, MySQLRows } from '../src/mysql-dbapi';
+import { Row, Rows } from '../src/db-api';
+import { Canceler, Context } from '@sabl/context';
+import { IsolationLevel } from '../src/storage-api';
+import { getDbApi, runTransaction, withDbApi } from '../src/context';
 
 config({ path: './env/test.env' });
 
@@ -22,9 +23,21 @@ function getPool() {
   });
 }
 
+function getMySqlPool() {
+  const { MYSQL_SERVER, MYSQL_USER, MYSQL_PASS } = process.env;
+
+  return new MySQLPool({
+    connectionLimit: 10,
+    host: MYSQL_SERVER,
+    user: MYSQL_USER,
+    password: MYSQL_PASS,
+    database: 'example_01',
+  });
+}
+
 export async function queryRows() {
   const pool = getPool();
-  await usePoolConnection(pool, async (con) => {
+  await usePoolConnection(Context.background, pool, async (con) => {
     let rows: Rows | null = null;
     try {
       const qry = con.query('select * from some_data');
@@ -42,7 +55,7 @@ export async function queryRows() {
 
 export async function queryRowsCancel() {
   const pool = getPool();
-  await usePoolConnection(pool, async (con) => {
+  await usePoolConnection(Context.background, pool, async (con) => {
     let rows: Rows | null = null;
     let i = 0;
     const [clr, cancel] = Canceler.create();
@@ -80,7 +93,7 @@ export async function queryRowsCancel() {
 
 export async function queryRowsClose() {
   const pool = getPool();
-  await usePoolConnection(pool, async (con) => {
+  await usePoolConnection(Context.background, pool, async (con) => {
     let rows: Rows | null = null;
     let i = 0;
     try {
@@ -108,13 +121,14 @@ export async function queryRowsClose() {
 
 export async function queryRowTypes() {
   const pool = getPool();
-  await usePoolConnection(pool, async (con) => {
-    let rows: Rows | null = null;
+  await usePoolConnection(Context.background, pool, async (con) => {
+    let rows: MySQLRows | null = null;
     try {
       const qry = con.query('select * from many_types');
       rows = new MySQLRows(qry, con, pool, false);
+      await rows.ready();
 
-      const colTypes = await rows.columnTypes();
+      const colTypes = rows.columnTypes();
       console.log(colTypes);
 
       while (await rows.next()) {
@@ -129,9 +143,27 @@ export async function queryRowTypes() {
   await pool.promise().end();
 }
 
+export async function queryDirect() {
+  const msPool = getMySqlPool();
+  const rows = await msPool.query(
+    Context.background,
+    'select * from big_table limit 10'
+  );
+
+  for await (const row of rows) {
+    console.log(row);
+    console.log(row.id);
+    console.log(row[0]);
+    console.log(row.toArray());
+    console.log(row.toObject());
+  }
+
+  await msPool.close();
+}
+
 export async function queryEvents() {
   const pool = getPool();
-  await usePoolConnection(pool, async (con) => {
+  await usePoolConnection(Context.background, pool, async (con) => {
     let res: (v: unknown) => void;
     let rej: (r?: unknown) => void;
     const p = new Promise((resolve, reject) => {
@@ -179,8 +211,8 @@ export async function queryEvents() {
 
 export async function insertMany() {
   const pool = getPool();
-  await usePoolConnection(pool, async (con) => {
-    const sql = 'insert big_table ( code , label, num, ts) values ?';
+  await usePoolConnection(Context.background, pool, async (con) => {
+    const sql = 'insert big_table ( code , label, num, ts ) values ?';
     const cp = con.promise();
     let rows = [];
     for (let i = 0; i < 100_000; i++) {
@@ -200,6 +232,89 @@ export async function insertMany() {
   await pool.promise().end();
 }
 
+export async function useTxn() {
+  const msPool = new MySQLPool(getPool());
+  const ctx = Context.background;
+  const txn = await msPool.beginTxn(ctx, {
+    isolationLevel: IsolationLevel.readUncommitted,
+  });
+
+  let row: Row | null = null;
+  let rowId = 0;
+  try {
+    row = await txn.queryRow(ctx, 'select count(*) from big_table');
+    console.log(row![0]);
+
+    const result = await txn.exec(
+      ctx,
+      `insert into big_table ( code, num, ts )
+      values ( ?, ?, now() )`,
+      ...[faker.random.word(), 44]
+    );
+    console.log(result);
+
+    row = await txn.queryRow(
+      ctx,
+      'select * from big_table where id = ?',
+      (rowId = result.lastId!)
+    );
+    console.log(row);
+
+    row = await txn.queryRow(ctx, 'select count(*) from big_table');
+    console.log(row![0]);
+
+    await txn.commit();
+  } catch (err) {
+    console.error(err);
+    await txn.rollback();
+  }
+
+  row = await msPool.queryRow(ctx, 'select count(*) from big_table');
+  console.log(row![0]);
+
+  row = await msPool.queryRow(
+    ctx,
+    'select * from big_table where id = ?',
+    rowId
+  );
+  console.log(row);
+
+  await msPool.close();
+}
+
+export async function ctxDbApi() {
+  const mPool = getMySqlPool();
+  const ctx = Context.value(withDbApi, mPool);
+
+  let rowId;
+  await runTransaction(ctx, async (ctx) => {
+    const txn = Context.as(ctx).require(getDbApi);
+    let row = await txn.queryRow(ctx, 'select count(*) from big_table');
+    console.log(row![0]);
+
+    const result = await txn.exec(
+      ctx,
+      `insert into big_table ( code, num, ts )
+      values ( ?, ?, now() )`,
+      ...[faker.random.word(), 44]
+    );
+    console.log(result);
+    rowId = result.lastId;
+
+    row = await txn.queryRow(ctx, 'select count(*) from big_table');
+    console.log(row![0]);
+  });
+
+  const row = await mPool.queryRow(
+    ctx,
+    'select * from big_table where id = ?',
+    rowId
+  );
+  console.log(row);
+
+  await mPool.close();
+}
+
 (async () => {
-  await queryRowTypes();
+  await queryDirect();
 })();
