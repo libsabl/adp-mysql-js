@@ -3,6 +3,7 @@
 // license that can be found in the LICENSE file.
 
 import { IContext } from '@sabl/context';
+import { Row } from './row';
 import {
   StorageApi,
   StorageTxn,
@@ -10,12 +11,12 @@ import {
   TxnOptions,
 } from './storage-api';
 
-/** A map of named SQL parameters */
-export type ParamMap = { [key: string]: unknown };
-
 export type ParamValue = unknown;
 
-export type PlainObject = { [key: string]: unknown };
+/** A map of named SQL parameters */
+export type ParamMap = { [key: string]: ParamValue };
+
+export type PlainObject = { [key: string | symbol]: unknown };
 
 /** A name-value pair uses as a database query parameter */
 export class NamedParam {
@@ -30,25 +31,6 @@ export function toParamArray(map?: ParamMap): ParamValue[] {
     result.push(new NamedParam(k, map[k]));
   }
   return result;
-}
-
-/**
- * A simple interface that represents retrieving a value
- * by a string key or integer index. Useful for implementing
- * reusable generic relational database CRUD logic.
- */
-export interface Row {
-  /** Retrieve a value by name */
-  [key: string]: unknown;
-
-  /** Retrieve a value by zero-based index */
-  [index: number]: unknown;
-
-  /** Return the underlying data as a plain object */
-  toObject(): PlainObject;
-
-  /** Return the underlying data as an array of values */
-  toArray(): unknown[];
 }
 
 /** The result of executing a SQL command */
@@ -94,9 +76,6 @@ export interface ColumnInfo {
  * the first row of the result set. Use `next()` to advance
  * from row to row.
  *
- * Also implements {@link Row} to read the values of the
- * current row by ordinal or name
- *
  * see golang: [`sql.Rows`](https://pkg.go.dev/database/sql#Rows)
  * ([source](https://github.com/golang/go/blob/master/src/database/sql/sql.go))
  */
@@ -127,7 +106,12 @@ export interface Rows extends AsyncIterable<Row> {
    */
   get err(): Error | null;
 
-  /** Access the current row */
+  /**
+   * Access the current row. The returned row is not
+   * guaranteed to be valid after the Rows is advanced
+   * or closed. To obtain a safe copy for retention,
+   * use static Row.toObject(), Row.toArray(), or Row.clone()
+   */
   get row(): Row;
 }
 

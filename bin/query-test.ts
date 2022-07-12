@@ -3,8 +3,9 @@ import { config } from 'dotenv';
 import { faker } from '@faker-js/faker';
 
 import { usePoolConnection } from '../src/mysql-util';
-import { MySQLPool, MySQLRows } from '../src/mysql-dbapi';
-import { Row, Rows } from '../src/db-api';
+import { MySQLPool, MySQLQuery } from '../src/mysql-dbapi';
+import { Rows } from '../src/db-api';
+import { Row } from '../src/row';
 import { Canceler, Context } from '@sabl/context';
 import { IsolationLevel } from '../src/storage-api';
 import { getDbApi, runTransaction, withDbApi } from '../src/context';
@@ -41,7 +42,7 @@ export async function queryRows() {
     let rows: Rows | null = null;
     try {
       const qry = con.query('select * from some_data');
-      rows = new MySQLRows(qry, con, pool, true);
+      rows = new MySQLQuery(qry, con, pool, true);
 
       while (await rows.next()) {
         console.log(rows.row);
@@ -61,7 +62,7 @@ export async function queryRowsCancel() {
     const [clr, cancel] = Canceler.create();
     try {
       const qry = con.query('select * from big_table');
-      rows = new MySQLRows(qry, con, pool, true, clr);
+      rows = new MySQLQuery(qry, con, pool, true, clr);
 
       while (await rows.next()) {
         const row = rows.row;
@@ -77,7 +78,7 @@ export async function queryRowsCancel() {
     // Reuse open connection
     try {
       const qry = con.query('select * from some_data');
-      rows = new MySQLRows(qry, con, pool, true);
+      rows = new MySQLQuery(qry, con, pool, true);
 
       while (await rows.next()) {
         const row = rows.row;
@@ -98,7 +99,7 @@ export async function queryRowsClose() {
     let i = 0;
     try {
       const qry = con.query('select * from big_table');
-      rows = new MySQLRows(qry, con, pool, false);
+      rows = new MySQLQuery(qry, con, pool, false);
 
       const cols = await rows.columns();
       console.log(cols);
@@ -122,10 +123,10 @@ export async function queryRowsClose() {
 export async function queryRowTypes() {
   const pool = getPool();
   await usePoolConnection(Context.background, pool, async (con) => {
-    let rows: MySQLRows | null = null;
+    let rows: MySQLQuery | null = null;
     try {
       const qry = con.query('select * from many_types');
-      rows = new MySQLRows(qry, con, pool, false);
+      rows = new MySQLQuery(qry, con, pool, false);
       await rows.ready();
 
       const colTypes = rows.columnTypes();
@@ -133,7 +134,7 @@ export async function queryRowTypes() {
 
       while (await rows.next()) {
         const row = rows.row;
-        console.log(row.toObject());
+        console.log(Row.toObject(row));
       }
     } finally {
       await rows?.close();
@@ -154,8 +155,8 @@ export async function queryDirect() {
     console.log(row);
     console.log(row.id);
     console.log(row[0]);
-    console.log(row.toArray());
-    console.log(row.toObject());
+    console.log(Row.toArray(row));
+    console.log(Row.toObject(row));
   }
 
   await msPool.close();

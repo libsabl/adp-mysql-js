@@ -13,7 +13,6 @@ import {
   NamedParam,
   PlainObject,
   Result,
-  Row,
   Rows,
 } from './db-api';
 import {
@@ -38,15 +37,15 @@ import {
   getPoolConnection,
   usePoolConnection,
 } from './mysql-util';
-import { ObjectRow, ObjectRow_1 } from './object-row';
 import { ColumnDefinition, FieldFlags, parseType } from './mysql-types';
 import { hasFlag, PromiseHandle } from './util';
+import { Row } from './row';
 
 const highWater = 100;
 const resume = 75;
 
 function makeRow(src: PlainObject, cols: string[]): Row {
-  return new ObjectRow(src, cols);
+  return Row.fromObject(src, cols);
 }
 
 function toColInfo(col: ColumnDefinition): ColumnInfo {
@@ -91,7 +90,7 @@ async function openRows(
   }
 
   const qry = con.query(sql, inputs);
-  const rows = new MySQLRows(
+  const rows = new MySQLQuery(
     qry,
     con,
     pool,
@@ -126,7 +125,7 @@ async function execStmt(
   }
 
   const qry = con.query(sql, inputs);
-  const rows = new MySQLRows(
+  const rows = new MySQLQuery(
     qry,
     con,
     pool,
@@ -155,7 +154,7 @@ interface MySQLResult {
   serverStatus: number;
 }
 
-export class MySQLRows implements Rows {
+export class MySQLQuery implements Rows {
   readonly #con: Connection;
   readonly #pool: Pool;
   readonly #keepOpen: boolean;

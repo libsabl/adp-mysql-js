@@ -2,8 +2,9 @@
 // Use of this source code is governed by a MIT
 // license that can be found in the LICENSE file.
 
-import { IContext } from '@sabl/context';
-import { ParamMap, ParamValue, Row } from './db-api';
+import type { IContext } from '@sabl/context';
+import type { ParamMap, ParamValue } from './db-api';
+import type { Row } from './row';
 
 /** Flags controlling how a model is mapped to SQL statements */
 export enum MappingFlags {

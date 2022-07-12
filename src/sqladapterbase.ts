@@ -5,7 +5,8 @@
 import { Context, IContext } from '@sabl/context';
 import { RecordError } from '@sabl/record';
 import { getDbApi } from './context';
-import { ParamMap, Row, toParamArray } from './db-api';
+import { ParamMap, toParamArray } from './db-api';
+import { Row } from './row';
 import {
   hasMappingFlag,
   MappingFlags,
