@@ -25,12 +25,14 @@
   ],
   "keywords": [
     "sabl",
-    "record"
+    "mysql"
   ],
   "license": "MIT",
   "dependencies": {
     "@sabl/context": "^0.3.3",
-    "@sabl/record": "^0.1.0-a04",
+    "@sabl/db-api": "^0.1.0",
+    "@sabl/storage-pool": "^0.1.0",
+    "@sabl/txn": "^0.1.0",
     "mysql2": "^2.3.3"
   },
   "devDependencies": {

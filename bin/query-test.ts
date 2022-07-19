@@ -3,12 +3,12 @@ import { config } from 'dotenv';
 import { faker } from '@faker-js/faker';
 
 import { usePoolConnection } from '../src/mysql-util';
-import { MySQLPool, MySQLQuery } from '../src/mysql-dbapi';
-import { Rows } from '../src/db-api';
-import { Row } from '../src/row';
+import { MySQLPool } from '../src/mysql-dbapi';
+import { MySQLQuery } from '../src/mysql-query';
+import { Rows, Row } from '@sabl/db-api';
 import { Canceler, Context } from '@sabl/context';
-import { IsolationLevel } from '../src/storage-api';
-import { getDbApi, runTransaction, withDbApi } from '../src/context';
+import { IsolationLevel } from '@sabl/txn';
+// import { getDbApi, runTransaction, withDbApi } from '../src/context';
 
 config({ path: './env/test.env' });
 
@@ -101,9 +101,9 @@ export async function queryRowsClose() {
       const qry = con.query('select * from big_table');
       rows = new MySQLQuery(qry, con, pool, false);
 
-      const cols = await rows.columns();
+      const cols = rows.columns;
       console.log(cols);
-      console.log(await rows.columnTypes());
+      console.log(rows.columnTypes);
 
       while (await rows.next()) {
         const row = rows.row;
@@ -120,6 +120,52 @@ export async function queryRowsClose() {
   await pool.promise().end();
 }
 
+export async function queryRowsOverlap() {
+  const pool = getPool();
+
+  await usePoolConnection(Context.background, pool, async (con) => {
+    let rows1: Rows | null = null;
+    let i = 0;
+    try {
+      const qry1 = con.query('select * from big_table');
+      rows1 = new MySQLQuery(qry1, con, pool, false);
+      await (<MySQLQuery>rows1).ready();
+
+      const cols = rows1.columns;
+      console.log(cols);
+      console.log(rows1.columnTypes);
+
+      const qry2 = con.query('select * from some_data');
+      const rows2 = new MySQLQuery(qry2, con, pool, false);
+      //
+
+      while (await rows1.next()) {
+        const row = rows1.row;
+        console.log(Row.toArray(row));
+
+        // if (await rows2.next()) {
+        //   console.log(Row.toArray(rows2.row));
+        // }
+
+        if (++i == 300) {
+          await rows1.close();
+        }
+      }
+
+      await (<MySQLQuery>rows2).ready();
+      for await (const r of rows2) {
+        console.log(Row.toObject(r));
+      }
+    } catch (e) {
+      console.log(e);
+    } finally {
+      await rows1?.close();
+    }
+  });
+
+  await pool.promise().end();
+}
+
 export async function queryRowTypes() {
   const pool = getPool();
   await usePoolConnection(Context.background, pool, async (con) => {
@@ -129,7 +175,7 @@ export async function queryRowTypes() {
       rows = new MySQLQuery(qry, con, pool, false);
       await rows.ready();
 
-      const colTypes = rows.columnTypes();
+      const colTypes = rows.columnTypes;
       console.log(colTypes);
 
       while (await rows.next()) {
@@ -264,10 +310,10 @@ export async function useTxn() {
     row = await txn.queryRow(ctx, 'select count(*) from big_table');
     console.log(row![0]);
 
-    await txn.commit();
+    await txn.commit(ctx);
   } catch (err) {
     console.error(err);
-    await txn.rollback();
+    await txn.rollback(ctx);
   }
 
   row = await msPool.queryRow(ctx, 'select count(*) from big_table');
@@ -283,6 +329,7 @@ export async function useTxn() {
   await msPool.close();
 }
 
+/*
 export async function ctxDbApi() {
   const mPool = getMySqlPool();
   const ctx = Context.value(withDbApi, mPool);
@@ -315,7 +362,8 @@ export async function ctxDbApi() {
 
   await mPool.close();
 }
+*/
 
 (async () => {
-  await queryDirect();
+  await queryRowsOverlap();
 })();
