@@ -17,7 +17,8 @@ import {
 import { Connection, QueryError, Pool, Query } from 'mysql2';
 import { cancelQuery, closeConnection } from './mysql-util';
 import { ColumnDefinition, FieldFlags, parseType } from './mysql-types';
-import { hasFlag, PromiseHandle } from './util';
+import { hasFlag, PromiseHandle } from './promise-handle';
+import { AsyncCompleteEmitter, AsyncEventEmitter } from './async-event-emitter';
 
 const highWater = 100;
 const resume = 75;
@@ -58,7 +59,10 @@ interface MySQLResult {
   serverStatus: number;
 }
 
-export class MySQLQuery implements Rows {
+export class MySQLQuery
+  extends AsyncEventEmitter
+  implements Rows, AsyncCompleteEmitter<Rows>
+{
   readonly #con: Connection;
   readonly #pool: Pool;
   readonly #keepOpen: boolean;
@@ -86,6 +90,7 @@ export class MySQLQuery implements Rows {
     keepOpen: boolean,
     clr?: Canceler
   ) {
+    super('complete');
     this.#con = con;
     this.#pool = pool;
     this.#keepOpen = keepOpen;
@@ -240,6 +245,7 @@ export class MySQLQuery implements Rows {
       this.#waitClose = null;
       pClose.resolve();
     }
+    this.emit('complete', null, [this]);
   }
 
   #resolveNext(ok: boolean): void {
@@ -335,7 +341,7 @@ export async function openRows(
   keepOpen: boolean,
   sql: string,
   ...params: unknown[]
-): Promise<Rows> {
+): Promise<Rows & AsyncCompleteEmitter<Rows>> {
   const inputs = [];
   for (const val of params) {
     if ((<NamedParam>val).name !== undefined) {

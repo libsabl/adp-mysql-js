@@ -14,29 +14,18 @@ export class PromiseHandle<T> {
     let res: FnResolve<T>;
     let rej: FnReject;
 
-    this.#promise = new Promise<T>((resolve, reject) => {
+    this.promise = new Promise<T>((resolve, reject) => {
       res = resolve;
       rej = reject;
     });
 
     // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-    this.#resolve = res!;
+    this.resolve = res!;
     // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-    this.#reject = rej!;
+    this.reject = rej!;
   }
 
-  readonly #resolve: FnResolve<T>;
-  resolve(value: T | PromiseLike<T>): void {
-    return this.#resolve(value);
-  }
-
-  readonly #reject: FnReject;
-  reject(reason?: unknown): void {
-    return this.#reject(reason);
-  }
-
-  readonly #promise: Promise<T>;
-  get promise(): Promise<T> {
-    return this.#promise;
-  }
+  readonly resolve: FnResolve<T>;
+  readonly reject: FnReject;
+  readonly promise: Promise<T>;
 }

@@ -3,7 +3,7 @@ import { config } from 'dotenv';
 import { faker } from '@faker-js/faker';
 
 import { usePoolConnection } from '../src/mysql-util';
-import { MySQLPool } from '../src/mysql-dbapi';
+import { MySQLPool } from '../src/mysql-pool';
 import { MySQLQuery } from '../src/mysql-query';
 import { Rows, Row } from '@sabl/db-api';
 import { Canceler, Context } from '@sabl/context';
