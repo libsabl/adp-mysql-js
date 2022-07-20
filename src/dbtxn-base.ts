@@ -142,7 +142,6 @@ export class DbTxnBase
       this.started = true;
       return;
     } catch (err) {
-      console.log(err);
       await this.con.close();
       throw err;
     }

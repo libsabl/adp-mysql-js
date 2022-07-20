@@ -7,6 +7,7 @@ import { DbConn, DbPool, DbTxn, Result, Row, Rows } from '@sabl/db-api';
 import { StorageKind, StorageMode } from '@sabl/storage-pool';
 import { TxnOptions } from '@sabl/txn';
 import { createPool, Pool, PoolOptions } from 'mysql2';
+
 import { MySQLConn } from './mysql-conn';
 import { execStmt, openRows } from './mysql-query';
 import { getPoolConnection, usePoolConnection } from './mysql-util';

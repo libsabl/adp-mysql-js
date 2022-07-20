@@ -4,15 +4,21 @@
 
 import { IContext } from '@sabl/context';
 import { TxnOptions } from '@sabl/txn';
-import { Result, Row, Rows } from '@sabl/db-api';
+import { DbConn, Result, Row, Rows } from '@sabl/db-api';
 import { AsyncCompleteEmitter } from './async-event-emitter';
 import { Pool, PoolConnection } from 'mysql2';
 import { DbConnBase } from './dbconn-base';
-import { DbTxnBase } from './dbtxn-base';
 import { execStmt, openRows } from './mysql-query';
 import { MySQLTxn } from './mysql-txn';
 
+const isMySQLConn = Symbol('MySQLConn');
+
 export class MySQLConn extends DbConnBase {
+  static isMySQLConn(con: DbConn | MySQLConn): con is MySQLConn {
+    return isMySQLConn in con;
+  }
+
+  protected readonly [isMySQLConn] = true;
   #con: PoolConnection;
   #pool: Pool;
 
@@ -64,7 +70,7 @@ export class MySQLConn extends DbConnBase {
     return openRows(ctx, this.#con, this.#pool, this.keepOpen, sql, ...params);
   }
 
-  protected _createTxn(ctx: IContext, opts: TxnOptions | undefined): DbTxnBase {
+  protected _createTxn(ctx: IContext, opts: TxnOptions | undefined): MySQLTxn {
     const txnCon = new MySQLConn(ctx, this.keepOpen, this.#con, this.#pool);
     return new MySQLTxn(txnCon, opts);
   }

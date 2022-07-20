@@ -151,7 +151,6 @@ export class MySQLQuery
 
     if (err.code === 'ER_QUERY_INTERRUPTED') {
       if (this.#canceling) {
-        console.log('Ignoring expected ER_QUERY_INTERRUPTED error');
         // Intentional KILL QUERY
         return this.#end();
       }
@@ -195,7 +194,7 @@ export class MySQLQuery
 
   #pushRow(row: PlainObject) {
     if (this.#canceling) {
-      // console.log('Ignoring row: cancelling');
+      // Ignore the row. Query is canceling
       return;
     }
 
@@ -226,9 +225,10 @@ export class MySQLQuery
     buf.push(row);
     if (buf.length >= highWater) {
       if (this.#paused) {
-        console.log(`BUF(${buf.length}): already paused`);
+        // console.log(`BUF(${buf.length}): already paused`);
+        // No op: already paused
       } else {
-        console.log(`BUF(${buf.length}): pausing`);
+        // console.log(`BUF(${buf.length}): pausing`);
         this.#con.pause();
         this.#paused = true;
       }
@@ -305,7 +305,6 @@ export class MySQLQuery
     if (this.#buf.length) {
       this.#row = makeRow(this.#buf.shift()!, this.#fieldNames!);
       if (this.#paused && this.#buf.length <= resume) {
-        console.log('resuming');
         this.#con.resume();
         this.#paused = false;
       }

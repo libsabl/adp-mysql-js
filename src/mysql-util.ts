@@ -113,7 +113,7 @@ export async function cancelQuery(
   pool: Pool
 ): Promise<void> {
   const threadId = con.threadId;
-  console.log(`KILL QUERY ${threadId}`);
+  // console.log(`KILL QUERY ${threadId}`);
   await usePoolConnection(ctx, pool, async (con) => {
     try {
       await con.promise().execute(`KILL QUERY ${threadId}`);

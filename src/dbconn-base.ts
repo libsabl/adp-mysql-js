@@ -7,7 +7,7 @@ import { StorageKind, StorageMode } from '@sabl/storage-pool';
 import { TxnOptions } from '@sabl/txn';
 import { DbConn, DbTxn, Result, Row, Rows } from '@sabl/db-api';
 import { AsyncCompleteEmitter, AsyncEventEmitter } from './async-event-emitter';
-import { PromiseHandle } from './promise-handle';
+import { FnResolve, PromiseHandle } from './promise-handle';
 import { DbTxnBase } from './dbtxn-base';
 
 interface ConnOpBase {
@@ -62,7 +62,6 @@ export abstract class DbConnBase
   #waitClose: PromiseHandle<void> | null = null;
   #canceled = false;
 
-  readonly #rootCtx: IContext;
   readonly #clr: Canceler | null;
   readonly #onCancel: null | (() => void) = null;
   readonly #opQueue: ConnOperation[] = [];
@@ -71,7 +70,6 @@ export abstract class DbConnBase
     super(['complete' /* , 'cancel' */]);
     this.keepOpen = keepOpen;
 
-    this.#rootCtx = ctx;
     const clr = (this.#clr = ctx.canceler || null);
     if (clr != null) {
       const onCancel = (this.#onCancel = () => this.#cancel());
@@ -220,7 +218,7 @@ export abstract class DbConnBase
       type: 'beginTxn',
       ctx,
       opts,
-      resolve: ph.resolve,
+      resolve: <FnResolve<DbTxn>>ph.resolve,
       reject: ph.reject,
     });
 
